@@ -7,6 +7,10 @@
   <link rel="manifest" href="manifest.json" />
   <link rel="icon" href="https://cdn-icons-png.flaticon.com/512/3135/3135706.png" />
   <title>Expense Tracker</title>
+
+  <!-- SheetJS library for reading and writing real .xlsx Excel files -->
+  <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
+
   <style>
     :root {
       --bg: #0f172a;
@@ -16,7 +20,7 @@
       --text-muted: #94a3b8;
       --border: #334155;
       --danger: #ef4444;
-      --success: #22c55e;
+      --excel: #107c41;
     }
     * { box-sizing: border-box; margin: 0; padding: 0; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
     body { background-color: var(--bg); color: var(--text); padding: 16px; padding-bottom: 80px; }
@@ -28,7 +32,7 @@
     input, select, button { width: 100%; padding: 10px; border-radius: 8px; border: 1px solid var(--border); background: #0f172a; color: var(--text); font-size: 0.95rem; margin-bottom: 12px; outline: none; }
     input:focus, select:focus { border-color: var(--accent); }
     button.btn-primary { background: var(--accent); color: #0f172a; font-weight: 600; border: none; cursor: pointer; margin-top: 4px; }
-    button.btn-secondary { background: #334155; color: var(--text); font-weight: 500; border: none; cursor: pointer; margin-bottom: 0; }
+    button.btn-excel { background: var(--excel); color: #ffffff; font-weight: 600; border: none; cursor: pointer; margin-bottom: 0; }
     .row { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
     .expense-item { display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid var(--border); padding: 12px 0; }
     .expense-item:last-child { border-bottom: none; }
@@ -89,15 +93,15 @@
     <div id="expenseList"></div>
   </div>
 
-  <!-- Backup & Restore -->
+  <!-- Excel Backup & Restore -->
   <div class="card">
-    <label>Data Backup & Restore</label>
+    <label>Excel Backup & Restore</label>
     <div class="row">
-      <button type="button" class="btn-secondary" id="exportBtn">Export JSON</button>
-      <button type="button" class="btn-secondary" id="importTriggerBtn">Import JSON</button>
+      <button type="button" class="btn-excel" id="exportBtn">Export Excel</button>
+      <button type="button" class="btn-excel" id="importTriggerBtn">Import Excel</button>
     </div>
-    <!-- Hidden file input for import -->
-    <input type="file" id="fileInput" accept=".json" style="display: none;" />
+    <!-- Hidden file input for Excel files -->
+    <input type="file" id="fileInput" accept=".xlsx, .xls, .csv" style="display: none;" />
   </div>
 
   <script>
@@ -121,7 +125,7 @@
     // Default date to today
     dateInput.value = new Date().toISOString().split('T')[0];
 
-    // Read stored data or fallback to empty array
+    // Load from local storage
     let expenses = JSON.parse(localStorage.getItem('my_expenses')) || [];
 
     function saveAndRender() {
@@ -192,25 +196,38 @@
     searchInput.addEventListener('input', render);
     monthFilter.addEventListener('input', render);
 
-    // Export Handler
+    // EXPORT TO REAL EXCEL (.xlsx)
     exportBtn.addEventListener('click', () => {
       if (expenses.length === 0) {
-        alert('No data to export!');
+        alert('No expenses to export!');
         return;
       }
-      const dataStr = "data:text/json;charset=utf-8," + encodeURIComponent(JSON.stringify(expenses, null, 2));
-      const downloadAnchor = document.createElement('a');
-      downloadAnchor.setAttribute("href", dataStr);
-      downloadAnchor.setAttribute("download", `expenses_backup_${new Date().toISOString().split('T')[0]}.json`);
-      document.body.appendChild(downloadAnchor);
-      downloadAnchor.click();
-      downloadAnchor.remove();
+
+      // Format data into clean spreadsheet columns
+      const exportData = expenses.map(item => ({
+        "Date": item.date,
+        "Expense Name": item.name,
+        "Amount": Number(item.amount)
+      }));
+
+      const worksheet = XLSX.utils.json_to_sheet(exportData);
+      const workbook = XLSX.utils.book_new();
+      XLSX.utils.book_append_sheet(workbook, worksheet, "Expenses");
+
+      // Set column widths for readability in Excel
+      worksheet['!cols'] = [
+        { wch: 14 }, // Date
+        { wch: 25 }, // Expense Name
+        { wch: 12 }  // Amount
+      ];
+
+      const today = new Date().toISOString().split('T')[0];
+      XLSX.writeFile(workbook, `Expenses_${today}.xlsx`);
     });
 
-    // Import Trigger Handler
+    // IMPORT FROM EXCEL (.xlsx / .xls / .csv)
     importTriggerBtn.addEventListener('click', () => fileInput.click());
 
-    // Import File Read Handler
     fileInput.addEventListener('change', (e) => {
       const file = e.target.files[0];
       if (!file) return;
@@ -218,23 +235,51 @@
       const reader = new FileReader();
       reader.onload = function(evt) {
         try {
-          const importedData = JSON.parse(evt.target.result);
-          if (Array.isArray(importedData)) {
-            // Merge or overwrite; here we merge without duplicate IDs
-            const existingIds = new Set(expenses.map(e => e.id));
-            const newEntries = importedData.filter(e => e.id && !existingIds.has(e.id));
-            expenses = [...expenses, ...newEntries];
-            saveAndRender();
-            alert(`Successfully imported ${newEntries.length} new entries!`);
-          } else {
-            alert('Invalid backup file format.');
+          const data = new Uint8Array(evt.target.result);
+          const workbook = XLSX.read(data, { type: 'array' });
+          const firstSheet = workbook.Sheets[workbook.SheetNames[0]];
+          const rows = XLSX.utils.sheet_to_json(firstSheet);
+
+          if (!rows || rows.length === 0) {
+            alert('No records found in this Excel sheet.');
+            return;
           }
+
+          let addedCount = 0;
+          rows.forEach((row, idx) => {
+            // Find columns flexibly regardless of casing
+            const dateVal = row['Date'] || row['date'] || row['DATE'];
+            const nameVal = row['Expense Name'] || row['Name'] || row['name'] || row['Expense'] || row['expense'];
+            const amountVal = row['Amount'] || row['amount'] || row['AMOUNT'];
+
+            if (nameVal && amountVal) {
+              let parsedDate = dateVal;
+              // Handle Excel date numbers if applicable
+              if (typeof dateVal === 'number') {
+                parsedDate = new Date(Math.round((dateVal - 25569) * 86400 * 1000)).toISOString().split('T')[0];
+              } else if (!parsedDate) {
+                parsedDate = new Date().toISOString().split('T')[0];
+              }
+
+              expenses.push({
+                id: (Date.now() + idx).toString(),
+                name: String(nameVal).trim(),
+                amount: parseFloat(amountVal) || 0,
+                date: String(parsedDate).trim()
+              });
+              addedCount++;
+            }
+          });
+
+          saveAndRender();
+          alert(`Successfully imported ${addedCount} expenses from Excel!`);
         } catch (err) {
-          alert('Error reading the backup file.');
+          console.error(err);
+          alert('Could not read this Excel file. Ensure it has "Date", "Expense Name", and "Amount" columns.');
         }
-        fileInput.value = ''; // Reset input
+        fileInput.value = '';
       };
-      reader.readAsText(file);
+      reader.readAsArrayBuffer(file);
     });
 
     render();
