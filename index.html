@@ -1,0 +1,178 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+  <meta name="theme-color" content="#1e293b" />
+  <title>Expense Tracker</title>
+  <style>
+    :root {
+      --bg: #0f172a;
+      --card: #1e293b;
+      --accent: #38bdf8;
+      --text: #f8fafc;
+      --text-muted: #94a3b8;
+      --border: #334155;
+      --danger: #ef4444;
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
+    body { background-color: var(--bg); color: var(--text); padding: 16px; padding-bottom: 80px; }
+    h1 { font-size: 1.4rem; margin-bottom: 12px; }
+    .card { background: var(--card); border: 1px solid var(--border); border-radius: 12px; padding: 16px; margin-bottom: 16px; }
+    .stat-label { font-size: 0.8rem; color: var(--text-muted); text-transform: uppercase; }
+    .stat-val { font-size: 1.8rem; font-weight: bold; color: var(--accent); margin-top: 4px; }
+    label { display: block; font-size: 0.85rem; color: var(--text-muted); margin-bottom: 4px; }
+    input, select, button { width: 100%; padding: 10px; border-radius: 8px; border: 1px solid var(--border); background: #0f172a; color: var(--text); font-size: 0.95rem; margin-bottom: 12px; outline: none; }
+    input:focus, select:focus { border-color: var(--accent); }
+    button.btn-primary { background: var(--accent); color: #0f172a; font-weight: 600; border: none; cursor: pointer; margin-top: 4px; }
+    .row { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+    .expense-item { display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid var(--border); padding: 12px 0; }
+    .expense-item:last-child { border-bottom: none; }
+    .expense-info .title { font-weight: 600; }
+    .expense-info .meta { font-size: 0.75rem; color: var(--text-muted); margin-top: 2px; }
+    .expense-amount { font-weight: bold; font-size: 1.05rem; }
+    .btn-delete { background: transparent; border: none; color: var(--danger); width: auto; margin: 0 0 0 12px; padding: 4px 8px; font-size: 0.8rem; cursor: pointer; }
+    .empty-state { text-align: center; color: var(--text-muted); padding: 24px 0; font-size: 0.9rem; }
+  </style>
+  <link rel="manifest" href="manifest.json" />
+  <link rel="icon" href="https://cdn-icons-png.flaticon.com/512/3135/3135706.png" />
+</head>
+<body>
+
+  <h1>My Expenses</h1>
+
+  <!-- Summary Card -->
+  <div class="card">
+    <div class="stat-label">Total Filtered Expenses</div>
+    <div class="stat-val" id="totalDisplay">0.00</div>
+  </div>
+
+  <!-- Entry Form -->
+  <div class="card">
+    <form id="expenseForm">
+      <div>
+        <label>Expense Name</label>
+        <input type="text" id="name" placeholder="e.g., Groceries, Fuel" required />
+      </div>
+      <div class="row">
+        <div>
+          <label>Amount</label>
+          <input type="number" id="amount" step="0.01" placeholder="0.00" required />
+        </div>
+        <div>
+          <label>Date</label>
+          <input type="date" id="date" required />
+        </div>
+      </div>
+      <button type="submit" class="btn-primary">Add Expense</button>
+    </form>
+  </div>
+
+  <!-- Search & Filter Controls -->
+  <div class="card">
+    <div class="row">
+      <div>
+        <label>Search</label>
+        <input type="text" id="searchInput" placeholder="Filter title..." />
+      </div>
+      <div>
+        <label>Filter Month</label>
+        <input type="month" id="monthFilter" />
+      </div>
+    </div>
+  </div>
+
+  <!-- List -->
+  <div class="card">
+    <div id="expenseList"></div>
+  </div>
+
+  <script>
+    const form = document.getElementById('expenseForm');
+    const nameInput = document.getElementById('name');
+    const amountInput = document.getElementById('amount');
+    const dateInput = document.getElementById('date');
+    const searchInput = document.getElementById('searchInput');
+    const monthFilter = document.getElementById('monthFilter');
+    const expenseList = document.getElementById('expenseList');
+    const totalDisplay = document.getElementById('totalDisplay');
+
+    // Default date to today
+    dateInput.value = new Date().toISOString().split('T')[0];
+
+    let expenses = JSON.parse(localStorage.getItem('my_expenses')) || [];
+
+    function saveAndRender() {
+      localStorage.setItem('my_expenses', JSON.stringify(expenses));
+      render();
+    }
+
+    function render() {
+      const q = searchInput.value.toLowerCase().trim();
+      const month = monthFilter.value; // YYYY-MM
+
+      const filtered = expenses.filter(item => {
+        const matchesName = item.name.toLowerCase().includes(q);
+        const matchesMonth = month ? item.date.startsWith(month) : true;
+        return matchesName && matchesMonth;
+      });
+
+      filtered.sort((a, b) => new Date(b.date) - new Date(a.date));
+
+      let total = 0;
+      expenseList.innerHTML = '';
+
+      if (filtered.length === 0) {
+        expenseList.innerHTML = '<div class="empty-state">No matching expenses found.</div>';
+      } else {
+        filtered.forEach(item => {
+          total += Number(item.amount);
+          const div = document.createElement('div');
+          div.className = 'expense-item';
+          div.innerHTML = `
+            <div class="expense-info">
+              <div class="title">${item.name}</div>
+              <div class="meta">${item.date}</div>
+            </div>
+            <div style="display:flex; align-items:center;">
+              <span class="expense-amount">${Number(item.amount).toFixed(2)}</span>
+              <button class="btn-delete" onclick="deleteExpense('${item.id}')">✕</button>
+            </div>
+          `;
+          expenseList.appendChild(div);
+        });
+      }
+
+      totalDisplay.textContent = total.toFixed(2);
+    }
+
+    window.deleteExpense = function(id) {
+      expenses = expenses.filter(e => e.id !== id);
+      saveAndRender();
+    };
+
+    form.addEventListener('submit', (e) => {
+      e.preventDefault();
+      const newExpense = {
+        id: Date.now().toString(),
+        name: nameInput.value.trim(),
+        amount: parseFloat(amountInput.value),
+        date: dateInput.value
+      };
+      expenses.push(newExpense);
+      saveAndRender();
+      form.reset();
+      dateInput.value = new Date().toISOString().split('T')[0];
+    });
+
+    searchInput.addEventListener('input', render);
+    monthFilter.addEventListener('input', render);
+
+    render();
+
+    if ('serviceWorker' in navigator) {
+      navigator.serviceWorker.register('./sw.js');
+    }
+  </script>
+</body>
+</html>
