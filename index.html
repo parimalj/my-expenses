@@ -4,6 +4,8 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
   <meta name="theme-color" content="#1e293b" />
+  <link rel="manifest" href="manifest.json" />
+  <link rel="icon" href="https://cdn-icons-png.flaticon.com/512/3135/3135706.png" />
   <title>Expense Tracker</title>
   <style>
     :root {
@@ -14,6 +16,7 @@
       --text-muted: #94a3b8;
       --border: #334155;
       --danger: #ef4444;
+      --success: #22c55e;
     }
     * { box-sizing: border-box; margin: 0; padding: 0; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
     body { background-color: var(--bg); color: var(--text); padding: 16px; padding-bottom: 80px; }
@@ -25,6 +28,7 @@
     input, select, button { width: 100%; padding: 10px; border-radius: 8px; border: 1px solid var(--border); background: #0f172a; color: var(--text); font-size: 0.95rem; margin-bottom: 12px; outline: none; }
     input:focus, select:focus { border-color: var(--accent); }
     button.btn-primary { background: var(--accent); color: #0f172a; font-weight: 600; border: none; cursor: pointer; margin-top: 4px; }
+    button.btn-secondary { background: #334155; color: var(--text); font-weight: 500; border: none; cursor: pointer; margin-bottom: 0; }
     .row { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
     .expense-item { display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid var(--border); padding: 12px 0; }
     .expense-item:last-child { border-bottom: none; }
@@ -34,8 +38,6 @@
     .btn-delete { background: transparent; border: none; color: var(--danger); width: auto; margin: 0 0 0 12px; padding: 4px 8px; font-size: 0.8rem; cursor: pointer; }
     .empty-state { text-align: center; color: var(--text-muted); padding: 24px 0; font-size: 0.9rem; }
   </style>
-  <link rel="manifest" href="manifest.json" />
-  <link rel="icon" href="https://cdn-icons-png.flaticon.com/512/3135/3135706.png" />
 </head>
 <body>
 
@@ -87,7 +89,23 @@
     <div id="expenseList"></div>
   </div>
 
+  <!-- Backup & Restore -->
+  <div class="card">
+    <label>Data Backup & Restore</label>
+    <div class="row">
+      <button type="button" class="btn-secondary" id="exportBtn">Export JSON</button>
+      <button type="button" class="btn-secondary" id="importTriggerBtn">Import JSON</button>
+    </div>
+    <!-- Hidden file input for import -->
+    <input type="file" id="fileInput" accept=".json" style="display: none;" />
+  </div>
+
   <script>
+    // Register Service Worker
+    if ('serviceWorker' in navigator) {
+      navigator.serviceWorker.register('./sw.js').catch(console.error);
+    }
+
     const form = document.getElementById('expenseForm');
     const nameInput = document.getElementById('name');
     const amountInput = document.getElementById('amount');
@@ -96,10 +114,14 @@
     const monthFilter = document.getElementById('monthFilter');
     const expenseList = document.getElementById('expenseList');
     const totalDisplay = document.getElementById('totalDisplay');
+    const exportBtn = document.getElementById('exportBtn');
+    const importTriggerBtn = document.getElementById('importTriggerBtn');
+    const fileInput = document.getElementById('fileInput');
 
     // Default date to today
     dateInput.value = new Date().toISOString().split('T')[0];
 
+    // Read stored data or fallback to empty array
     let expenses = JSON.parse(localStorage.getItem('my_expenses')) || [];
 
     function saveAndRender() {
@@ -147,8 +169,10 @@
     }
 
     window.deleteExpense = function(id) {
-      expenses = expenses.filter(e => e.id !== id);
-      saveAndRender();
+      if (confirm('Delete this expense?')) {
+        expenses = expenses.filter(e => e.id !== id);
+        saveAndRender();
+      }
     };
 
     form.addEventListener('submit', (e) => {
@@ -168,11 +192,52 @@
     searchInput.addEventListener('input', render);
     monthFilter.addEventListener('input', render);
 
-    render();
+    // Export Handler
+    exportBtn.addEventListener('click', () => {
+      if (expenses.length === 0) {
+        alert('No data to export!');
+        return;
+      }
+      const dataStr = "data:text/json;charset=utf-8," + encodeURIComponent(JSON.stringify(expenses, null, 2));
+      const downloadAnchor = document.createElement('a');
+      downloadAnchor.setAttribute("href", dataStr);
+      downloadAnchor.setAttribute("download", `expenses_backup_${new Date().toISOString().split('T')[0]}.json`);
+      document.body.appendChild(downloadAnchor);
+      downloadAnchor.click();
+      downloadAnchor.remove();
+    });
 
-    if ('serviceWorker' in navigator) {
-      navigator.serviceWorker.register('./sw.js');
-    }
+    // Import Trigger Handler
+    importTriggerBtn.addEventListener('click', () => fileInput.click());
+
+    // Import File Read Handler
+    fileInput.addEventListener('change', (e) => {
+      const file = e.target.files[0];
+      if (!file) return;
+
+      const reader = new FileReader();
+      reader.onload = function(evt) {
+        try {
+          const importedData = JSON.parse(evt.target.result);
+          if (Array.isArray(importedData)) {
+            // Merge or overwrite; here we merge without duplicate IDs
+            const existingIds = new Set(expenses.map(e => e.id));
+            const newEntries = importedData.filter(e => e.id && !existingIds.has(e.id));
+            expenses = [...expenses, ...newEntries];
+            saveAndRender();
+            alert(`Successfully imported ${newEntries.length} new entries!`);
+          } else {
+            alert('Invalid backup file format.');
+          }
+        } catch (err) {
+          alert('Error reading the backup file.');
+        }
+        fileInput.value = ''; // Reset input
+      };
+      reader.readAsText(file);
+    });
+
+    render();
   </script>
 </body>
 </html>
